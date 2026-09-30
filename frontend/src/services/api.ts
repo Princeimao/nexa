@@ -16,7 +16,7 @@ import {
   TrendData,
 } from "../types";
 
-const API_BASE = "/api";
+const API_BASE = `${import.meta.env.VITE_BACKEND_API}/api`;
 
 const countryQuery = (country?: string) => {
   const params = new URLSearchParams();
@@ -211,9 +211,7 @@ export const api = {
     });
     const json = await res.json().catch(() => null);
     if (!res.ok || !json?.success) {
-      throw new Error(
-        json?.error || `Policy AI request failed: ${res.status}`,
-      );
+      throw new Error(json?.error || `Policy AI request failed: ${res.status}`);
     }
     if (!json.data?.answer) {
       throw new Error("Policy AI returned an empty response.");
