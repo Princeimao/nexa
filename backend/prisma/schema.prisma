@@ -1,0 +1,725 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/**
+ * =========================================================
+ * ENUMS
+ * =========================================================
+ */
+
+enum SectorCategory {
+  WATER_SUPPLY
+  RURAL_ROADS
+  POWER_GRID
+  HEALTHCARE
+  SANITATION
+  EDUCATION
+  FLOOD_DRAINAGE
+}
+
+enum BricsCountry {
+  RUSSIA
+  INDIA
+  CHINA
+  BRAZIL
+  SOUTH_AFRICA
+  EGYPT
+  ETHIOPIA
+  IRAN
+  SAUDI_ARABIA
+  UAE
+  INDONESIA
+}
+
+enum BricsLanguage {
+  RU
+  ZH
+  EN
+  PT
+  HI
+  BN
+  TA
+  TE
+  MR
+  GU
+  KN
+  ML
+  PA
+}
+
+enum SeverityLevel {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum GrievanceStatus {
+  REGISTERED
+  UNDER_VERIFICATION
+  ESCALATED_TO_PLANNING
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum ProjectStatus {
+  PLANNED
+  SANCTIONED
+  IN_PROGRESS
+  COMPLETED
+  STALLED
+}
+
+enum GapSeverity {
+  CRITICAL_UNFUNDED
+  HIGH_DEFICIT
+  MODERATE_GAP
+  ALIGNED
+  WELL_FUNDED
+}
+
+enum ChannelType {
+  WHATSAPP
+  VOICE_CALL
+  WEB_PORTAL
+  SMS
+}
+
+enum AiAnalysisType {
+  POLICY_QUERY
+  GRIEVANCE_CLASSIFICATION
+  PLAN_GAP_ANALYSIS
+  PROJECT_IMPACT
+  DISTRICT_SUMMARY
+  EXECUTIVE_SUMMARY
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ReportType {
+  EXECUTIVE_SUMMARY
+  GRIEVANCE_REPORT
+  PROJECT_REPORT
+  POLICY_GAP_REPORT
+  DISTRICT_REPORT
+  FINANCIAL_REPORT
+}
+
+/**
+ * =========================================================
+ * DEPARTMENT
+ * =========================================================
+ */
+
+model Department {
+  id          String  @id @default(uuid())
+  name        String
+  code        String  @unique
+  description String?
+
+  grievances Grievance[]
+  projects   GovernmentProject[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+/**
+ * =========================================================
+ * DISTRICT / DEMOGRAPHIC DATA
+ * =========================================================
+ */
+
+model DistrictDemographic {
+  id String @id @default(uuid())
+
+  bricsCountry BricsCountry @default(INDIA)
+  country  String
+  state    String
+  district String
+
+  population         Int
+  ruralPercentage    Float
+  vulnerabilityIndex Int
+
+  baselineWaterIndex  Int
+  baselineRoadIndex   Int
+  baselinePowerIndex  Int
+  baselineHealthIndex Int
+
+  latitude  Float
+  longitude Float
+
+  /**
+   * These fields are cached analytics values.
+   * The source of truth remains Grievance and GovernmentProject.
+   * They can be refreshed by an analytics aggregation job.
+   */
+  totalComplaintsCount    Int   @default(0)
+  unresolvedCount         Int   @default(0)
+  criticalComplaintsCount Int   @default(0)
+  activeProjectsCount     Int   @default(0)
+  sanctionedBudgetInCr    Float @default(0.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  grievances Grievance[]
+  projects   GovernmentProject[]
+  planGaps   PolicyGapInsight[]
+
+  @@unique([country, state, district])
+  @@index([state, country])
+  @@index([country, district])
+  @@index([bricsCountry])
+}
+
+/**
+ * =========================================================
+ * GRIEVANCES
+ * =========================================================
+ */
+
+model Grievance {
+  id           String @id @default(uuid())
+  ticketNumber String @unique
+
+  citizenPhone String
+  citizenName  String
+
+  channel  ChannelType @default(WHATSAPP)
+  language String      @default("hi")
+  bricsLanguage BricsLanguage @default(HI)
+
+  rawTranscript  String
+  translatedText String?
+
+  category    SectorCategory
+  subCategory String
+  description String
+
+  country     BricsCountry @default(INDIA)
+  bricsRegion String?
+  state       String
+  district    String
+  block       String?
+  villageWard String?
+
+  latitude  Float?
+  longitude Float?
+
+  severity SeverityLevel @default(HIGH)
+
+  affectedPopulationEst Int @default(500)
+
+  status GrievanceStatus @default(REGISTERED)
+
+  urgencyScore    Int   @default(80)
+  confidenceScore Float @default(0.95)
+
+  verified Boolean @default(true)
+
+  assignedDepartmentId String?
+  assignedDepartment   Department? @relation(fields: [assignedDepartmentId], references: [id], onDelete: SetNull)
+
+  districtId  String?
+  districtRef DistrictDemographic? @relation(fields: [districtId], references: [id], onDelete: SetNull)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  resolvedAt DateTime?
+
+  auditLogs GrievanceAuditLog[]
+
+  @@index([country, state, district])
+  @@index([districtId])
+  @@index([district, category])
+  @@index([status, severity])
+  @@index([createdAt])
+  @@index([assignedDepartmentId])
+  @@index([bricsRegion])
+}
+
+/**
+ * =========================================================
+ * GRIEVANCE AUDIT / STATUS HISTORY
+ * =========================================================
+ */
+
+model GrievanceAuditLog {
+  id String @id @default(uuid())
+
+  grievanceId String
+
+  action String
+
+  oldStatus String?
+  newStatus String?
+
+  actor     String  @default("SYSTEM_AI")
+  actorType String?
+
+  notes    String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  grievance Grievance @relation(fields: [grievanceId], references: [id], onDelete: Cascade)
+
+  @@index([grievanceId, createdAt])
+  @@index([newStatus])
+}
+
+/**
+ * =========================================================
+ * GOVERNMENT PROJECTS
+ * =========================================================
+ */
+
+model GovernmentProject {
+  id          String @id @default(uuid())
+  projectCode String @unique
+
+  title      String
+  schemeName String
+
+  sector SectorCategory
+
+  country      String      @default("India")
+  bricsCountry BricsCountry @default(INDIA)
+  state        String
+  district     String
+
+  sanctionedBudgetInCr Float
+  spentBudgetInCr      Float @default(0.0)
+
+  targetBeneficiaries Int
+
+  status ProjectStatus @default(IN_PROGRESS)
+
+  progressPercentage Int @default(0)
+
+  startDate              DateTime
+  expectedCompletionDate DateTime
+  actualCompletionDate   DateTime?
+
+  description String
+
+  implementingAgency String
+
+  /**
+   * Optional link to a department responsible
+   * for implementation/monitoring.
+   */
+  departmentId String?
+
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  /**
+   * Before/after impact measurement.
+   */
+  impactMetricBeforeName String?
+  impactMetricBeforeVal  Float?
+  impactMetricBeforeUnit String?
+
+  impactMetricAfterName String?
+  impactMetricAfterVal  Float?
+  impactMetricAfterUnit String?
+
+  districtId String?
+
+  districtRef DistrictDemographic? @relation(fields: [districtId], references: [id], onDelete: SetNull)
+
+  milestones   ProjectMilestone[]
+  expenditures ProjectExpenditure[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([country, state, district])
+  @@index([bricsCountry])
+  @@index([districtId])
+  @@index([district, sector])
+  @@index([status])
+  @@index([departmentId])
+  @@index([startDate])
+  @@index([expectedCompletionDate])
+}
+
+/**
+ * =========================================================
+ * PROJECT MILESTONES
+ * =========================================================
+ */
+
+model ProjectMilestone {
+  id String @id @default(uuid())
+
+  projectId String
+
+  title       String
+  description String?
+
+  dueDate DateTime
+
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project GovernmentProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, dueDate])
+  @@index([projectId, completed])
+}
+
+/**
+ * =========================================================
+ * PROJECT EXPENDITURE HISTORY
+ * =========================================================
+ */
+
+model ProjectExpenditure {
+  id String @id @default(uuid())
+
+  projectId String
+
+  amountInCr Float
+
+  expenditureDate DateTime
+
+  description String?
+  source      String?
+
+  createdAt DateTime @default(now())
+
+  project GovernmentProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, expenditureDate])
+  @@index([expenditureDate])
+}
+
+/**
+ * =========================================================
+ * POLICY GAP INSIGHTS
+ * =========================================================
+ */
+
+model PolicyGapInsight {
+  id String @id @default(uuid())
+
+  country  String @default("India")
+  state    String
+  district String
+
+  sector SectorCategory
+
+  citizenDemandScore Int
+
+  activeProjectBudgetInCr Float @default(0.0)
+  activeProjectsCount     Int   @default(0)
+
+  totalComplaints    Int @default(0)
+  criticalComplaints Int @default(0)
+
+  gapSeverity GapSeverity @default(CRITICAL_UNFUNDED)
+
+  affectedPopulation Int @default(100000)
+
+  primaryKeyProblem String
+
+  /**
+   * AI-generated analysis.
+   */
+  aiRationale String
+
+  recommendedAction String
+
+  estimatedBudgetRequiredInCr Float
+
+  /**
+   * Period used when calculating this insight.
+   */
+  analysisPeriodStart DateTime?
+  analysisPeriodEnd   DateTime?
+
+  /**
+   * AI generation metadata.
+   */
+  generatedAt DateTime @default(now())
+  generatedBy String?
+
+  /**
+   * Human review workflow.
+   */
+  reviewed   Boolean   @default(false)
+  reviewedBy String?
+  reviewedAt DateTime?
+
+  districtId String?
+
+  districtRef DistrictDemographic? @relation(fields: [districtId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([country, state, district])
+  @@index([districtId])
+  @@index([district, sector])
+  @@index([gapSeverity])
+  @@index([reviewed])
+  @@index([createdAt])
+}
+
+/**
+ * =========================================================
+ * CITIZEN CONVERSATION SESSION
+ * =========================================================
+ * Used for WhatsApp / voice / citizen-facing ingestion.
+ * =========================================================
+ */
+
+model ConversationSession {
+  sessionId String @id
+
+  channel ChannelType @default(WHATSAPP)
+
+  phone       String
+  citizenName String?
+
+  language String @default("hi")
+
+  step String @default("COLLECTING_PROBLEM")
+
+  extractedData Json @default("{}")
+  missingFields Json @default("[]")
+  history       Json @default("[]")
+
+  createdTicketId String?
+
+  lastActiveAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+  @@index([lastActiveAt])
+}
+
+/**
+ * =========================================================
+ * POLICY AI SESSION
+ * =========================================================
+ * Separate from citizen conversation sessions.
+ * Used by internal Policy AI Copilot.
+ * =========================================================
+ */
+
+model PolicyAiSession {
+  id String @id @default(uuid())
+
+  title String?
+
+  /**
+   * If you later add authentication,
+   * this can reference your admin/user table.
+   */
+  userId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages PolicyAiMessage[]
+
+  @@index([userId])
+  @@index([updatedAt])
+}
+
+/**
+ * =========================================================
+ * POLICY AI MESSAGES
+ * =========================================================
+ */
+
+model PolicyAiMessage {
+  id        String          @id @default(uuid())
+  sessionId String
+  role      AiMessageRole
+  content   String
+  evidence  Json?
+  metadata  Json?
+  createdAt DateTime        @default(now())
+  session   PolicyAiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}
+
+model AiAnalysis {
+  id       String         @id @default(uuid())
+  type     AiAnalysisType
+  prompt   String
+  response String
+  model    String?
+
+  confidence Float?
+  sourceData Json?
+  sessionId  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@index([sessionId])
+}
+
+model GovernanceReport {
+  id         String     @id @default(uuid())
+  title      String
+  reportType ReportType
+
+  country     String?
+  state       String?
+  district    String?
+  parameters  Json?
+  generatedBy String?
+
+  fileUrl   String?
+  createdAt DateTime @default(now())
+
+  @@index([reportType, createdAt])
+  @@index([country, state, district])
+}
+
+/**
+ * =========================================================
+ * BRICS MACRO / INVESTMENT / TRADE DATASET
+ * =========================================================
+ * Compiled from public sources (see `source` on every row):
+ *  - World Bank WDI (GDP, population, growth) 2015-2024
+ *  - New Development Bank Annual Report 2024
+ *    (cumulative approvals USD 39.1bn across 120 projects;
+ *     country shares: India 27%, China 25%, South Africa 19%,
+ *     Brazil 17%, Russia 11%)
+ *  - China Customs / MOFCOM bilateral trade statistics
+ *  - Central Bank of Brazil BRICS Economic Bulletin 2025
+ *    (current accounts, trade balances)
+ *  - National statistical offices: Secex (Brazil), SARS
+ *    (South Africa), CBE (Egypt), CBUAE (UAE), BPS (Indonesia),
+ *    GASTAT (Saudi Arabia), Ministry of Commerce (India)
+ *  - MOFCOM / Xinhua China outward FDI bulletins
+ * =========================================================
+ */
+
+/**
+ * Yearly macro-economic + fiscal picture of one BRICS country.
+ * Drives the surplus -> infrastructure -> demand-fulfilment model.
+ */
+model BricsMacroIndicator {
+  id      String      @id @default(uuid())
+  country BricsCountry
+  year    Int
+
+  // ---- Size of economy ----------------------------------------------------
+  gdpUsdBn         Float
+  gdpGrowthPct     Float?
+  populationMn     Float?
+  localPerUsd      Float // local currency units per 1 USD (Cr conversion)
+
+  // ---- Infrastructure investment -----------------------------------------
+  infraSpendUsdBn  Float // public + private infrastructure investment, USD bn
+  infraSpendPctGdp Float
+
+  // ---- Capital flows ------------------------------------------------------
+  fdiInflowUsdBn  Float?
+  fdiOutflowUsdBn Float?
+
+  // ---- Trade --------------------------------------------------------------
+  tradeExportsUsdBn Float // goods exports to the world, USD bn
+  tradeImportsUsdBn Float // goods imports from the world, USD bn
+  tradeBalanceUsdBn Float // >0 surplus, <0 deficit
+  currentAccountUsdBn Float?
+
+  // ---- Surplus -> demand model -------------------------------------------
+  /** Share of a positive trade surplus earmarked for infrastructure. */
+  surplusInfraAllocationPct Float @default(15)
+
+  /** 0-100 composite pressure of unmet public service demand. */
+  publicDemandIndex Float
+
+  /** Share (%) of assessed public infrastructure demand currently funded. */
+  demandFulfilmentPct Float
+
+  /** Provenance of the row (publication + year). */
+  source  String
+  notes   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([country, year])
+  @@index([year])
+  @@index([country])
+}
+
+/**
+ * Cross-border investment from one BRICS country into another,
+ * by year / sector / instrument (FDI, NDB loan, BRI construction...).
+ */
+model BricsInvestmentFlow {
+  id               String       @id @default(uuid())
+  investorCountry  BricsCountry
+  recipientCountry BricsCountry
+  year             Int
+
+  sector     String // TRANSPORT | ENERGY | DIGITAL | WATER_SANITATION | HEALTHCARE | AGRI_FOOD | HOUSING_URBAN | EDUCATION | MANUFACTURING
+  instrument String // FDI | NDB_LOAN | BRI_CONSTRUCTION | BRI_FINANCE | OFFICIAL_DEVELOPMENT | PORTFOLIO
+
+  amountUsdBn   Float
+  projectCount  Int    @default(1)
+  /** Share of the flow that lands in physical infrastructure. */
+  infraSharePct Float  @default(60)
+  /** Estimated direct jobs supported (thousands). */
+  jobsCreatedK  Float?
+
+  source String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([investorCountry, recipientCountry, year, sector, instrument])
+  @@index([recipientCountry, year])
+  @@index([investorCountry, year])
+}
+
+/**
+ * Bilateral goods trade between two BRICS countries,
+ * by year and product category.
+ */
+model BricsTradeFlow {
+  id        String      @id @default(uuid())
+  exporter  BricsCountry
+  importer  BricsCountry
+  year      Int
+  category  String // ENERGY_MINERALS | MACHINERY_ELECTRONICS | AGRI_FOOD | PHARMA_HEALTH | TEXTILES_APPAREL | VEHICLES_TRANSPORT | SERVICES
+
+  valueUsdBn Float
+
+  source String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([exporter, importer, year, category])
+  @@index([importer, year])
+  @@index([exporter, year])
+}
