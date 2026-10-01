@@ -5,7 +5,19 @@ export const policyAiRouter = Router();
 
 const handleAnalyze = async (req: any, res: any) => {
   try {
-    const { query, conversationHistory, country, filterState, filterDistrict, filterSector } = req.body;
+    // Body may arrive as a string when the client posts JSON with a
+    // `text/plain` content type (used to avoid CORS preflight). Parse it.
+    const body =
+      typeof req.body === "string"
+        ? (() => {
+            try {
+              return JSON.parse(req.body);
+            } catch {
+              return {};
+            }
+          })()
+        : (req.body ?? {});
+    const { query, conversationHistory, country, filterState, filterDistrict, filterSector } = body;
     if (!query) {
       return res.status(400).json({ success: false, error: 'Query is required' });
     }

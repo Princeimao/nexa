@@ -31,9 +31,10 @@ grievanceRouter.post('/', async (req, res) => {
   }
 });
 
-grievanceRouter.patch('/:id/status', async (req, res) => {
+const handleStatusUpdate = async (req: any, res: any) => {
   try {
-    const { status } = req.body;
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body ?? {});
+    const { status } = body;
     const updated = await DbService.updateGrievanceStatus(req.params.id, status);
     if (!updated) {
       return res.status(404).json({ success: false, error: 'Grievance not found' });
@@ -42,4 +43,9 @@ grievanceRouter.patch('/:id/status', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
+};
+
+grievanceRouter.patch('/:id/status', handleStatusUpdate);
+// POST alias: PATCH is never a CORS-simple request, so browsers always
+// preflight it. The POST alias lets the frontend use a preflight-free call.
+grievanceRouter.post('/:id/status', handleStatusUpdate);

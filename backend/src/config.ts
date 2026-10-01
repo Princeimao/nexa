@@ -62,4 +62,5 @@ export const CONFIG = {
   TWILIO_PHONE_NUMBER: str(process.env.TWILIO_PHONE_NUMBER),
 
   SESSION_TTL_MINUTES: int(process.env.SESSION_TTL_MINUTES, 60),
+  FRONTEND_URL: str(process.env.FRONTEND_URL, "*"),
 };

@@ -16,7 +16,58 @@ import {
   TrendData,
 } from "../types";
 
-const API_BASE = `${import.meta.env.VITE_BACKEND_API}/api`;
+const rawBase = (import.meta.env.VITE_BACKEND_API as string | undefined)
+  ?.trim()
+  .replace(/^["']|["']$/g, "");
+if (!rawBase && import.meta.env.DEV) {
+  console.warn(
+    "[api] VITE_BACKEND_API is not set. Check frontend/.env and restart the dev server.",
+  );
+}
+const API_BASE = `${(rawBase || "http://localhost:5000").replace(/\/$/, "")}/api`;
+
+/**
+ * POST a JSON payload without triggering a CORS preflight.
+ *
+ * `Content-Type: application/json` forces browsers to send an OPTIONS
+ * preflight, which some gateways/proxies answer without CORS headers —
+ * the browser then blocks the real POST and fetch throws
+ * `TypeError: Failed to fetch`. Sending the same JSON string as
+ * `text/plain` keeps it a CORS "simple request" (no preflight); the
+ * backend parses both content types.
+ */
+const postJson = async <T>(path: string, payload: unknown, timeoutMs = 90000): Promise<T> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: JSON.stringify(payload ?? {}),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(
+        "Policy AI request timed out. The backend took too long to respond — please retry.",
+      );
+    }
+    // Network-level failure (DNS, CORS-blocked, backend down, offline).
+    throw new Error(
+      `Failed to fetch (${API_BASE}${path}). The backend is unreachable from this browser — check VITE_BACKEND_API, CORS, and that the backend is running.`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new Error(
+      (json && (json.error || json.message)) || `Request failed: ${res.status}`,
+    );
+  }
+  return (json?.data ?? json) as T;
+};
 
 const countryQuery = (country?: string) => {
   const params = new URLSearchParams();
@@ -165,13 +216,9 @@ export const api = {
     id: string,
     status: GrievanceStatus,
   ): Promise<Grievance> => {
-    const res = await fetch(`${API_BASE}/grievances/${id}/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    const json = await res.json();
-    return json.data;
+    // POST alias (see backend grievanceRouter): PATCH always triggers a CORS
+    // preflight, POST with text/plain does not.
+    return postJson<Grievance>(`/grievances/${id}/status`, { status });
   },
 
   // Projects & Demographics
@@ -204,19 +251,14 @@ export const api = {
       filterSector?: SectorCategory;
     },
   ): Promise<PolicyAiResponse> => {
-    const res = await fetch(`${API_BASE}/ai/policy-analyst/analyze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, ...context }),
-    });
-    const json = await res.json().catch(() => null);
-    if (!res.ok || !json?.success) {
-      throw new Error(json?.error || `Policy AI request failed: ${res.status}`);
-    }
-    if (!json.data?.answer) {
+    const data = await postJson<PolicyAiResponse>(
+      "/ai/policy-analyst/analyze",
+      { query, ...context },
+    );
+    if (!data?.answer) {
       throw new Error("Policy AI returned an empty response.");
     }
-    return json.data;
+    return data;
   },
 
   // Citizen Simulator Chat
@@ -228,21 +270,11 @@ export const api = {
     channel: "WHATSAPP" | "VOICE_CALL";
     language?: string;
   }) => {
-    const res = await fetch(`${API_BASE}/citizen/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    return await res.json();
+    return postJson("/citizen/chat", payload);
   },
 
   resetCitizenSession: async (sessionId: string) => {
-    const res = await fetch(`${API_BASE}/citizen/session/reset`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId }),
-    });
-    return await res.json();
+    return postJson("/citizen/session/reset", { sessionId });
   },
 
   // BRICS Investment / Trade / Demand
@@ -323,9 +355,6 @@ export const api = {
 
   // Reset Dataset
   resetSeedData: async () => {
-    const res = await fetch(`${API_BASE}/system/reset-seed`, {
-      method: "POST",
-    });
-    return await res.json();
+    return postJson("/system/reset-seed", {});
   },
 };

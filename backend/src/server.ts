@@ -17,10 +17,21 @@ import { prisma } from "./config/prisma.config.js";
 
 const app = express();
 
-// Standard middlewares & Morgan logger
-app.use(cors({ origin: CONFIG.CORS_ORIGIN }));
+app.use(
+  cors({
+    origin: CONFIG.FRONTEND_URL,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    exposedHeaders: ["Content-Type"],
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
+  }),
+);
+
 app.use(morgan("dev"));
-app.use(express.json());
+// Accept JSON sent as `text/plain` (preflight-free simple request) as well
+// as regular `application/json`.
+app.use(express.json({ type: ["application/json", "text/plain"] }));
 app.use(express.urlencoded({ extended: true }));
 
 // Health Check
